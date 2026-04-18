@@ -33,6 +33,7 @@ function cronToHuman(cron: string): string {
   const parts = cron.split(" ");
   if (parts.length !== 5) return cron;
   const [min, hour, dom, , dow] = parts;
+  if (!min || !hour) return cron;
   if (dom === "1" && dow === "*") return `Monthly on 1st at ${hour}:${min.padStart(2, "0")}`;
   if (dow !== "*") {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

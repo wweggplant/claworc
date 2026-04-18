@@ -537,6 +537,7 @@ func pushProviderUpdateToInstances(providerID uint) {
 				bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
 				models, gatewayProviders,
 				config.Cfg.LLMGatewayPort,
+				channelSyncFromInstance(inst),
 			)
 		}()
 	}
@@ -576,6 +577,7 @@ func reconfigureInstanceAsync(instID uint) {
 			bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
 			models, gatewayProviders,
 			config.Cfg.LLMGatewayPort,
+			channelSyncFromInstance(inst),
 		)
 	}()
 }
@@ -1083,7 +1085,7 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 
 	at := llmgateway.GetAPIType(body.APIType)
 	probePath := strings.TrimPrefix(at.ProbeURL(body.BaseURL), strings.TrimRight(body.BaseURL, "/"))
-  
+
 	statusCode, respBody, err := probeProviderURL(r.Context(), body.BaseURL, probePath, body.APIType, body.APIKey)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL or connection failed"})

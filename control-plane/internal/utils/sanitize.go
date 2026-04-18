@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var lookupIPAddr = net.DefaultResolver.LookupIPAddr
+
 // SanitizeForLog removes newlines and control characters from user-provided
 // strings to prevent log injection attacks where attackers could inject
 // fake log entries by including newline characters.
@@ -71,7 +73,7 @@ func ValidateExternalURL(rawBaseURL, pathSuffix string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	ips, err := lookupIPAddr(ctx, hostname)
 	if err != nil {
 		return "", fmt.Errorf("DNS resolution failed for %s: %w", hostname, err)
 	}

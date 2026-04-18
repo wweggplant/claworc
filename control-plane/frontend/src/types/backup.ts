@@ -10,11 +10,13 @@ export interface Backup {
   note: string;
   created_at: string;
   completed_at?: string;
+  type?: "full" | "incremental";
 }
 
 export interface BackupCreatePayload {
   paths?: string[];
   note?: string;
+  type?: "full" | "incremental";
 }
 
 export interface BackupRestorePayload {

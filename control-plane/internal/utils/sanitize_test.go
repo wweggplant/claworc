@@ -1,6 +1,9 @@
 package utils
 
 import (
+	"context"
+	"errors"
+	"net"
 	"testing"
 )
 
@@ -98,8 +101,20 @@ func TestValidateExternalURL_AcceptsPublicURL(t *testing.T) {
 }
 
 func TestValidateExternalURL_RejectsDNSRebinding(t *testing.T) {
-	// A hostname with no DNS records should be rejected
-	_, err := ValidateExternalURL("http://this-host-does-not-exist-12345.invalid", "/api")
+	originalLookup := lookupIPAddr
+	lookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if host != "resolver-test.invalid" {
+			t.Fatalf("unexpected host lookup: %s", host)
+		}
+		return nil, errors.New("no such host")
+	}
+	t.Cleanup(func() {
+		lookupIPAddr = originalLookup
+	})
+
+	// A hostname with no DNS records should be rejected. Stub the resolver so the
+	// test stays deterministic even on networks that wildcard .invalid.
+	_, err := ValidateExternalURL("http://resolver-test.invalid", "/api")
 	if err == nil {
 		t.Fatal("expected error for non-existent host, got nil")
 	}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 // mockInstance records ExecOpenclaw calls and returns queued results.
@@ -52,12 +54,12 @@ func (mockOps) StopInstance(_ context.Context, _ string) error                  
 func (mockOps) RestartInstance(_ context.Context, _ string, _ orchestrator.CreateParams) error {
 	return nil
 }
-func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)       { return "running", nil }
-func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error)    { return "", nil }
-func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error    { return nil }
-func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                   { return nil }
-func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error        { return nil }
-func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)        { return "", 0, nil }
+func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)    { return "running", nil }
+func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error) { return "", nil }
+func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error { return nil }
+func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                { return nil }
+func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error     { return nil }
+func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)     { return "", 0, nil }
 func (mockOps) UpdateResources(_ context.Context, _ string, _ orchestrator.UpdateResourcesParams) error {
 	return nil
 }
@@ -395,5 +397,111 @@ func TestConfigureInstance_CatalogProviderEmptyWhenNoneSelected(t *testing.T) {
 	}
 	if !strings.Contains(providersJSON, `"models":[]`) {
 		t.Errorf("expected empty models array; got: %s", providersJSON)
+	}
+}
+
+func TestConfigureInstance_FeishuChannelsSet(t *testing.T) {
+	inst := &mockInstance{}
+	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+		nil, nil, 0,
+		channelSyncConfig{
+			Sync: true,
+			Feishu: &feishuChannelSync{
+				Enabled:        true,
+				ConnectionMode: "websocket",
+				Domain:         "feishu",
+				AccountID:      "default",
+				AppID:          "cli_test",
+				AppSecret:      "secret_test",
+				DMPolicy:       "pairing",
+				GroupPolicy:    "disabled",
+			},
+		})
+
+	keys := make(map[string][]string)
+	for _, call := range inst.calls {
+		if len(call) >= 3 && call[0] == "config" && call[1] == "set" {
+			keys[call[2]] = call
+		}
+	}
+
+	feishuCall, ok := keys["channels.feishu"]
+	if !ok {
+		t.Fatalf("expected channels.feishu to be set; calls: %v", inst.calls)
+	}
+	if len(feishuCall) < 5 || feishuCall[4] != "--json" {
+		t.Fatalf("channels.feishu must be written as JSON; call: %v", feishuCall)
+	}
+	for _, want := range []string{
+		`"enabled":true`,
+		`"connectionMode":"websocket"`,
+		`"domain":"feishu"`,
+		`"defaultAccount":"default"`,
+		`"dmPolicy":"pairing"`,
+		`"groupPolicy":"disabled"`,
+		`"appId":"cli_test"`,
+		`"appSecret":"secret_test"`,
+	} {
+		if !strings.Contains(feishuCall[3], want) {
+			t.Fatalf("channels.feishu JSON missing %s: %s", want, feishuCall[3])
+		}
+	}
+
+	if _, ok := keys["agents.defaults.channels"]; ok {
+		t.Fatalf("Feishu config must be written to top-level channels.feishu, not agents.defaults.channels; calls: %v", inst.calls)
+	}
+
+	last := inst.calls[len(inst.calls)-1]
+	if last[0] != "gateway" || last[1] != "stop" {
+		t.Errorf("expected last call to be gateway stop, got %v", last)
+	}
+}
+
+func TestChannelSyncFromInstance_FeishuDefaultsAndSecret(t *testing.T) {
+	setupTestDB(t)
+
+	secret, err := utils.Encrypt("secret_test")
+	if err != nil {
+		t.Fatalf("encrypt feishu secret: %v", err)
+	}
+
+	rawConfig, err := json.Marshal(database.ChannelsConfig{
+		Feishu: &database.FeishuChannelConfig{
+			Enabled: true,
+			AppID:   "cli_test",
+			Accounts: database.FeishuAccountDefaults{
+				Default: database.FeishuPolicyConfig{},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal channels config: %v", err)
+	}
+
+	syncCfg := channelSyncFromInstance(database.Instance{
+		ChannelsConfig:  string(rawConfig),
+		FeishuAppSecret: secret,
+	})
+
+	if !syncCfg.Sync || syncCfg.Feishu == nil {
+		t.Fatalf("expected feishu sync config, got %+v", syncCfg)
+	}
+	if syncCfg.Feishu.AppID != "cli_test" {
+		t.Fatalf("expected AppID cli_test, got %q", syncCfg.Feishu.AppID)
+	}
+	if syncCfg.Feishu.AppSecret != "secret_test" {
+		t.Fatalf("expected decrypted secret, got %q", syncCfg.Feishu.AppSecret)
+	}
+	if syncCfg.Feishu.ConnectionMode != "websocket" {
+		t.Fatalf("expected default connectionMode websocket, got %q", syncCfg.Feishu.ConnectionMode)
+	}
+	if syncCfg.Feishu.Domain != "feishu" {
+		t.Fatalf("expected default domain feishu, got %q", syncCfg.Feishu.Domain)
+	}
+	if syncCfg.Feishu.DMPolicy != "pairing" {
+		t.Fatalf("expected default dmPolicy pairing, got %q", syncCfg.Feishu.DMPolicy)
+	}
+	if syncCfg.Feishu.GroupPolicy != "disabled" {
+		t.Fatalf("expected default groupPolicy disabled, got %q", syncCfg.Feishu.GroupPolicy)
 	}
 }

@@ -1,4 +1,5 @@
 import { useSearchParams } from "react-router-dom";
+import type { ReactNode } from "react";
 import { useUsageStats, useResetUsageLogs } from "@/hooks/useProviders";
 import {
   ResponsiveContainer,
@@ -69,10 +70,11 @@ export default function UsagePage() {
     return label.slice(5); // "MM-DD"
   }
 
-  function formatTimeTooltip(label: string): string {
-    if (granularity === "minute") return label.replace("T", " ") + ":00";
-    if (granularity === "hour") return label.replace("T", " ") + ":00";
-    return `Date: ${label}`;
+  function formatTimeTooltip(label: ReactNode): ReactNode {
+    const labelStr = String(label ?? "");
+    if (granularity === "minute") return labelStr.replace("T", " ") + ":00";
+    if (granularity === "hour") return labelStr.replace("T", " ") + ":00";
+    return `Date: ${labelStr}`;
   }
 
   const total = stats?.total;
@@ -207,7 +209,7 @@ export default function UsagePage() {
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatTimeLabel} />
                   <YAxis tick={{ fontSize: 11 }} />
                   <Tooltip
-                    formatter={(v: number) => [v.toLocaleString(), "Requests"]}
+                    formatter={(v: unknown) => [(v as number ?? 0).toLocaleString(), "Requests"]}
                     labelFormatter={formatTimeTooltip}
                   />
                   <Area
@@ -236,7 +238,7 @@ export default function UsagePage() {
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatTimeLabel} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v.toFixed(2)}`} />
                   <Tooltip
-                    formatter={(v: number) => [formatCost(v), "Cost"]}
+                    formatter={(v: unknown) => [formatCost((v as number) ?? 0), "Cost"]}
                     labelFormatter={formatTimeTooltip}
                   />
                   <Area
@@ -266,7 +268,7 @@ export default function UsagePage() {
                       tick={{ fontSize: 11 }}
                       width={90}
                     />
-                    <Tooltip formatter={(v: number) => [formatCost(v), "Cost"]} />
+                    <Tooltip formatter={(v: unknown) => [formatCost((v as number) ?? 0), "Cost"]} />
                     <Bar dataKey="cost_usd" fill="#6366f1" name="Cost (USD)" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -289,7 +291,7 @@ export default function UsagePage() {
                       tick={{ fontSize: 11 }}
                       width={90}
                     />
-                    <Tooltip formatter={(v: number) => [formatCost(v), "Cost"]} />
+                    <Tooltip formatter={(v: unknown) => [formatCost((v as number) ?? 0), "Cost"]} />
                     <Bar dataKey="cost_usd" fill="#f59e0b" name="Cost (USD)" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -314,7 +316,7 @@ export default function UsagePage() {
                       tick={{ fontSize: 10 }}
                       width={160}
                     />
-                    <Tooltip formatter={(v: number) => [formatTokens(v), ""]} />
+                    <Tooltip formatter={(v: unknown) => [formatTokens((v as number) ?? 0), ""]} />
                     <Legend />
                     <Bar dataKey="input_tokens" stackId="a" fill="#3b82f6" name="Input tokens" />
                     <Bar dataKey="output_tokens" stackId="a" fill="#818cf8" name="Output tokens" radius={[0, 4, 4, 0]} />

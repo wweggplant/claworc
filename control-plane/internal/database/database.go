@@ -103,9 +103,9 @@ func migrateProviderAPIKeys() {
 
 func seedDefaults() error {
 	defaults := map[string]string{
-		"default_cpu_request":          "500m",
+		"default_cpu_request":          "1000m",
 		"default_cpu_limit":            "2000m",
-		"default_memory_request":       "1Gi",
+		"default_memory_request":       "2Gi",
 		"default_memory_limit":         "4Gi",
 		"default_storage_homebrew":     "10Gi",
 		"default_storage_home":         "10Gi",
@@ -115,7 +115,7 @@ func seedDefaults() error {
 		"default_models":               "[]",
 		"ssh_key_rotation_policy_days": "90",
 		"ssh_audit_retention_days":     "90",
-		"default_timezone":             "America/New_York",
+		"default_timezone":             "Asia/Shanghai",
 		"default_user_agent":           "",
 	}
 

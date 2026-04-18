@@ -266,6 +266,9 @@ func main() {
 			r.Get("/instances/{id}/stats", handlers.GetInstanceStats)
 			r.Get("/instances/{id}/providers", handlers.ListInstanceProviders)
 			r.Post("/instances/{id}/update-image", handlers.UpdateInstanceImage)
+			r.Get("/instances/{id}/pairing/feishu", handlers.ListFeishuPairingRequests)
+			r.Post("/instances/{id}/pairing/feishu/approve", handlers.ApproveFeishuPairingRequest)
+			r.Post("/instances/{id}/pairing/feishu/revoke", handlers.RevokeFeishuPairing)
 			r.Get("/ssh-fingerprint", handlers.GetSSHFingerprint)
 
 			// Files

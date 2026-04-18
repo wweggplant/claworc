@@ -52,7 +52,6 @@ const multiSelectStyles: StylesConfig<MultiSelectOption, true> = {
     cursor: "pointer",
     ":active": { backgroundColor: "#dbeafe" },
   }),
-  noMessage: (base) => ({ ...base, color: "#9ca3af", fontSize: "0.875rem" }),
   indicatorSeparator: () => ({ display: "none" }),
   dropdownIndicator: (base) => ({
     ...base,

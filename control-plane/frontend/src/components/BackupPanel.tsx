@@ -27,15 +27,15 @@ interface Props {
 
 export default function BackupPanel({ instanceId }: Props) {
   const { data: backups, isLoading } = useInstanceBackups(instanceId);
-  const createMutation = useCreateBackup(instanceId);
-  const deleteMutation = useDeleteBackup(instanceId);
-  const restoreMutation = useRestoreBackup(instanceId);
+  const createMutation = useCreateBackup();
+  const deleteMutation = useDeleteBackup();
+  const restoreMutation = useRestoreBackup();
   const [note, setNote] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
 
   const handleCreate = (type: "full" | "incremental") => {
-    createMutation.mutate({ type, note: note || undefined });
+    createMutation.mutate({ instanceId, type, note: note || undefined });
     setNote("");
   };
 
@@ -128,7 +128,7 @@ export default function BackupPanel({ instanceId }: Props) {
                           {confirmRestore === b.id ? (
                             <span className="flex items-center gap-1">
                               <button
-                                onClick={() => { restoreMutation.mutate(b.id); setConfirmRestore(null); }}
+                                onClick={() => { restoreMutation.mutate({ backupId: b.id, instanceId }); setConfirmRestore(null); }}
                                 className="text-xs text-orange-600 hover:text-orange-800 font-medium"
                               >
                                 Confirm

@@ -34,11 +34,38 @@ type Instance struct {
 	LogPaths         string    `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
 	AllowedSourceIPs string    `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
 	EnabledProviders string    `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
+	ChannelsConfig   string    `gorm:"type:text;default:''" json:"-"`   // JSON: channel configuration (without secrets)
+	FeishuAppSecret  string    `json:"-"`                                // Fernet-encrypted Feishu app secret
 	Timezone         string    `gorm:"default:''" json:"timezone"`
 	UserAgent        string    `gorm:"default:''" json:"user_agent"`
 	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// ChannelsConfig holds channel configuration for an instance.
+type ChannelsConfig struct {
+	Feishu *FeishuChannelConfig `json:"feishu,omitempty"`
+}
+
+// FeishuChannelConfig holds Feishu-specific channel settings.
+type FeishuChannelConfig struct {
+	Enabled        bool                  `json:"enabled"`
+	ConnectionMode string                `json:"connectionMode"`
+	Domain         string                `json:"domain"`
+	AppID          string                `json:"appId"`
+	Accounts       FeishuAccountDefaults `json:"accounts"`
+}
+
+// FeishuAccountDefaults holds default account policies.
+type FeishuAccountDefaults struct {
+	Default FeishuPolicyConfig `json:"default"`
+}
+
+// FeishuPolicyConfig holds DM and group messaging policies.
+type FeishuPolicyConfig struct {
+	DMPolicy    string `json:"dmPolicy"`
+	GroupPolicy string `json:"groupPolicy"`
 }
 
 // ProviderModel represents a model entry in the OpenClaw provider config.

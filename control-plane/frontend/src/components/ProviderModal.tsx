@@ -127,6 +127,17 @@ export default function ProviderModal({
     mCatalogKey === CUSTOM_PROVIDER ||
     (mode === "edit" && !provider?.provider);
 
+  const providerBaseURLDefaults: Record<string, string> = {
+    zai: "https://open.bigmodel.cn/api/paas/v4/",
+  };
+
+  const providerModelOverrides: Record<string, { id: string; name: string; reasoning?: boolean; contextWindow?: number }[]> = {
+    zai: [
+      { id: "glm-5.1", name: "GLM-5.1" },
+      { id: "glm-5v-turbo", name: "GLM-5V-Turbo" },
+    ],
+  };
+
   const handleCatalogKeyChange = (val: string) => {
     setMCatalogKey(val);
     if (val === CUSTOM_PROVIDER) {
@@ -138,7 +149,7 @@ export default function ProviderModal({
       if (cat) {
         setMProvider(cat.name);
         setMName(cat.label);
-        setMBaseURL(cat.base_url);
+        setMBaseURL(cat.base_url || providerBaseURLDefaults[val] || "");
       }
     }
   };
@@ -186,6 +197,8 @@ export default function ProviderModal({
       if (mode === "create") {
         const apiType = resolveApiType();
         const models = isCustomProvider ? mModels : (() => {
+          const overrides = providerModelOverrides[mCatalogKey];
+          if (overrides) return overrides;
           const cat = catalogProviders.find((c) => c.name === mCatalogKey);
           if (!cat) return [];
           return cat.models.map((m) => ({
@@ -350,19 +363,21 @@ export default function ProviderModal({
             </div>
           )}
 
+          {showForm && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Base URL {!mBaseURL && <span className="text-red-500">*</span>}</label>
+              <input
+                type="text"
+                value={mBaseURL}
+                onChange={(e) => setMBaseURL(e.target.value)}
+                placeholder="https://api.example.com/v1"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
           {isCustomProvider && (
             <>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-                <input
-                  type="text"
-                  value={mBaseURL}
-                  onChange={(e) => setMBaseURL(e.target.value)}
-                  placeholder="https://api.example.com/v1"
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
               <div>
                 <label className="block text-xs text-gray-500 mb-1">API Type</label>
                 <select

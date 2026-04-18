@@ -11,6 +11,7 @@ import {
 } from "@/api/kanban";
 import { fetchProviders } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
+import { useInstances } from "@/hooks/useInstances";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -69,7 +70,7 @@ const ROLE_COLORS: Record<string, { bg: string; border: string; name: string }> 
 };
 
 function roleOf(c: KanbanComment) {
-  return ROLE_COLORS[c.kind] ?? ROLE_COLORS.assistant;
+  return ROLE_COLORS[c.kind] || ROLE_COLORS.assistant || ROLE_COLORS.user!;
 }
 
 // Author-to-avatar color (deterministic)
@@ -86,7 +87,7 @@ function avatarColor(author: string): string {
   ];
   let h = 0;
   for (let i = 0; i < author.length; i++) h = (h * 31 + author.charCodeAt(i)) | 0;
-  return palette[Math.abs(h) % palette.length];
+  return palette[Math.abs(h) % palette.length] ?? "bg-gray-500";
 }
 
 function authorInitials(author: string): string {
@@ -231,7 +232,7 @@ function ChatBubble({ comment }: { comment: KanbanComment }) {
           <span className="text-[10px] text-gray-400">{formatTime(comment.created_at)}</span>
         </div>
         <div
-          className={`rounded-lg px-3 py-2 text-sm break-words border ${role.bg} ${role.border}`}
+          className={`rounded-lg px-3 py-2 text-sm break-words border ${role.bg || "bg-gray-50"} ${role.border || "border-gray-200"}`}
         >
           {isUser ? (
             <div className="whitespace-pre-wrap">{comment.body}</div>
@@ -363,7 +364,7 @@ export default function KanbanPage() {
 
   useEffect(() => {
     if (selectedBoardId == null && boardsQ.data && boardsQ.data.length > 0) {
-      setSelectedBoardId(boardsQ.data[0].id);
+      setSelectedBoardId(boardsQ.data[0]?.id ?? null);
     }
   }, [boardsQ.data, selectedBoardId]);
 
@@ -392,7 +393,16 @@ export default function KanbanPage() {
     (boardQ.data?.tasks ?? []).forEach((t) => {
       if (t.status === "archived") return;
       const key = t.status === "dispatching" ? "in_progress" : t.status;
-      (buckets[key] ?? buckets.todo).push(t);
+      const bucket = buckets[key];
+      if (bucket) bucket.push(t);
+      else {
+        const fallbackBucket = buckets.todo;
+        if (fallbackBucket) fallbackBucket.push(t);
+        else {
+          const todoKey = COLUMNS.find(c => c.key === "todo")?.key ?? "todo";
+          buckets[todoKey]!.push(t);
+        }
+      }
     });
     return buckets;
   }, [boardQ.data]);

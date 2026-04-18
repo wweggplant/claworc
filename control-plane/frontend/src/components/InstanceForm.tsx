@@ -19,9 +19,9 @@ export default function InstanceForm({
   loading,
 }: InstanceFormProps) {
   const [displayName, setDisplayName] = useState("");
-  const [cpuRequest, setCpuRequest] = useState("500m");
+  const [cpuRequest, setCpuRequest] = useState("1000m");
   const [cpuLimit, setCpuLimit] = useState("2000m");
-  const [memoryRequest, setMemoryRequest] = useState("1Gi");
+  const [memoryRequest, setMemoryRequest] = useState("2Gi");
   const [memoryLimit, setMemoryLimit] = useState("4Gi");
   const [storageHomebrew, setStorageHomebrew] = useState("10Gi");
   const [storageHome, setStorageHome] = useState("10Gi");
@@ -56,6 +56,10 @@ export default function InstanceForm({
   // Brave key
   const [braveKey, setBraveKey] = useState("");
 
+  // Feishu channel
+  const [feishuAppId, setFeishuAppId] = useState("");
+  const [feishuAppSecret, setFeishuAppSecret] = useState("");
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!displayName.trim()) return;
@@ -83,6 +87,8 @@ export default function InstanceForm({
       vnc_resolution: vncResolution || null,
       timezone: timezone || null,
       user_agent: userAgent || null,
+      feishu_app_id: feishuAppId || null,
+      feishu_app_secret: feishuAppSecret || null,
     };
 
     if (enabledProviders.length > 0) {
@@ -151,7 +157,7 @@ export default function InstanceForm({
               type="text"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
-              placeholder={settings?.default_timezone ?? "America/New_York"}
+              placeholder={settings?.default_timezone ?? "Asia/Shanghai"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -208,6 +214,46 @@ export default function InstanceForm({
             placeholder="Leave empty to use global key"
             className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+      </div>
+
+      {/* Channels */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Channels</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Configure messaging channels for this agent.
+        </p>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-medium text-gray-700">Feishu</span>
+            <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full">
+              WebSocket
+            </span>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              App ID
+            </label>
+            <input
+              type="text"
+              value={feishuAppId}
+              onChange={(e) => setFeishuAppId(e.target.value)}
+              placeholder="cli_xxxxxxxxxxxxxxxx"
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              App Secret
+            </label>
+            <input
+              type="password"
+              value={feishuAppSecret}
+              onChange={(e) => setFeishuAppSecret(e.target.value)}
+              placeholder="Leave empty to skip Feishu"
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
         </div>
       </div>
 

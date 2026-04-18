@@ -149,7 +149,7 @@ export default function SettingsPage() {
                             <ProviderIcon provider={p.provider} size={22} />
                           ) : (
                             <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500">
-                              {p.name[0].toUpperCase()}
+                              {p.name?.[0]?.toUpperCase() || "?"}
                             </span>
                           )}
                         </div>
@@ -265,9 +265,9 @@ export default function SettingsPage() {
               <label className="block text-xs text-gray-500 mb-1">Default Timezone</label>
               <input
                 type="text"
-                defaultValue={settings.default_timezone ?? ""}
+                defaultValue={settings.default_timezone ?? "Asia/Shanghai"}
                 onChange={(e) => setResources((r) => ({ ...r, default_timezone: e.target.value }))}
-                placeholder="e.g., America/New_York"
+                placeholder="e.g., Asia/Shanghai"
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>

@@ -34,6 +34,9 @@ export interface Instance {
   control_url: string;
   gateway_token: string;
   sort_order: number;
+  has_feishu_override: boolean;
+  feishu_app_id: string;
+  masked_feishu_secret: string;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +60,8 @@ export interface InstanceCreatePayload {
   timezone?: string | null;
   user_agent?: string | null;
   enabled_providers?: number[];
+  feishu_app_id?: string | null;
+  feishu_app_secret?: string | null;
 }
 
 export interface InstanceUpdatePayload {
@@ -73,6 +78,8 @@ export interface InstanceUpdatePayload {
   memory_request?: string;
   memory_limit?: string;
   vnc_resolution?: string;
+  feishu_app_id?: string;
+  feishu_app_secret?: string;
 }
 
 export interface InstanceStats {
@@ -120,4 +127,14 @@ export interface InstanceConfig {
 export interface InstanceConfigUpdate {
   config: string;
   restarted: boolean;
+}
+
+export interface FeishuPairingRequest {
+  code: string;
+  // Other fields based on actual CLI JSON output
+  // Add as needed after testing with real CLI output
+}
+
+export interface PairingListResponse {
+  pending: FeishuPairingRequest[];
 }
