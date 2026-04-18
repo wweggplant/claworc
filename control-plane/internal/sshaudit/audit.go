@@ -29,6 +29,9 @@ const (
 	EventTerminalSession EventType = "terminal_session"
 	EventKeyUpload       EventType = "key_upload"
 	EventKeyRotation     EventType = "key_rotation"
+	EventPairingApprove  EventType = "pairing_approve"
+	EventPairingRevoke   EventType = "pairing_revoke"
+	EventChannelDelete   EventType = "channel_delete"
 )
 
 // AuditEntry is the GORM model for the ssh_audit_logs table.
@@ -126,6 +129,11 @@ func (a *Auditor) LogKeyUpload(instanceID uint, details string) {
 // LogKeyRotation logs a key rotation event.
 func (a *Auditor) LogKeyRotation(details string) {
 	a.Log(EventKeyRotation, 0, "system", details)
+}
+
+// LogPairingApprove logs a pairing approval event.
+func (a *Auditor) LogPairingApprove(instanceID uint, user, details string) {
+	a.Log(EventPairingApprove, instanceID, user, details)
 }
 
 // QueryOptions controls filtering and pagination for audit log queries.

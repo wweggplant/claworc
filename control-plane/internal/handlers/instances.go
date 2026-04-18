@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
@@ -57,6 +59,8 @@ type instanceCreateRequest struct {
 	Timezone         *string       `json:"timezone"`
 	UserAgent        *string       `json:"user_agent"`
 	EnabledProviders []uint        `json:"enabled_providers"`
+	FeishuAppID      *string       `json:"feishu_app_id"`
+	FeishuAppSecret  *string       `json:"feishu_app_secret"`
 }
 
 type modelsResponse struct {
@@ -95,6 +99,9 @@ type instanceResponse struct {
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
 	SortOrder             int             `json:"sort_order"`
+	HasFeishuOverride     bool            `json:"has_feishu_override"`
+	FeishuAppID           string          `json:"feishu_app_id"`
+	MaskedFeishuSecret    string          `json:"masked_feishu_secret"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
 }
@@ -115,6 +122,60 @@ func generateToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// extractLastJSON finds the last top-level JSON object in a string that may
+// contain non-JSON prefix lines (e.g. OpenClaw plugin log output).
+// It correctly handles braces inside JSON string values.
+func extractLastJSON(s string) string {
+	// Find the last '}' and walk backwards to find its matching '{'
+	// Skip braces inside quoted strings to handle user-controlled content.
+	end := strings.LastIndex(s, "}")
+	if end < 0 {
+		return ""
+	}
+
+	inString := false
+	escape := false
+	depth := 0
+	for i := end; i >= 0; i-- {
+		ch := s[i]
+
+		// Handle escape sequences
+		if escape {
+			escape = false
+			continue
+		}
+		if ch == '\\' {
+			escape = true
+			continue
+		}
+
+		// Track whether we're inside a string literal
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+
+		// Only count braces outside of strings
+		if !inString {
+			switch ch {
+			case '}':
+				depth++
+			case '{':
+				depth--
+				if depth == 0 {
+					candidate := s[i : end+1]
+					if json.Valid([]byte(candidate)) {
+						return candidate
+					}
+					// Not valid JSON, keep searching
+					depth = 1 // reset depth to continue finding outer brace
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func formatTimestamp(t time.Time) string {
@@ -285,6 +346,23 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
 
+	// Feishu channel response
+	var feishuAppID string
+	var maskedFeishuSecret string
+	hasFeishu := false
+	if inst.ChannelsConfig != "" {
+		var cc database.ChannelsConfig
+		if json.Unmarshal([]byte(inst.ChannelsConfig), &cc) == nil && cc.Feishu != nil && cc.Feishu.AppID != "" {
+			feishuAppID = cc.Feishu.AppID
+			hasFeishu = true
+		}
+	}
+	if inst.FeishuAppSecret != "" {
+		if plain, err := utils.Decrypt(inst.FeishuAppSecret); err == nil && plain != "" {
+			maskedFeishuSecret = utils.Mask(plain)
+		}
+	}
+
 	return instanceResponse{
 		ID:                    inst.ID,
 		Name:                  inst.Name,
@@ -314,6 +392,9 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
 		GatewayToken:          gatewayToken,
 		SortOrder:             inst.SortOrder,
+		HasFeishuOverride:     hasFeishu,
+		FeishuAppID:           feishuAppID,
+		MaskedFeishuSecret:    maskedFeishuSecret,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
 	}
@@ -533,24 +614,30 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set defaults
+	// Set defaults from database settings or use hardcoded fallbacks
+	getDefaultSetting := func(key, fallback string) string {
+		if val, err := database.GetSetting(key); err == nil && val != "" {
+			return val
+		}
+		return fallback
+	}
 	if body.CPURequest == "" {
-		body.CPURequest = "500m"
+		body.CPURequest = getDefaultSetting("default_cpu_request", "1000m")
 	}
 	if body.CPULimit == "" {
-		body.CPULimit = "2000m"
+		body.CPULimit = getDefaultSetting("default_cpu_limit", "2000m")
 	}
 	if body.MemoryRequest == "" {
-		body.MemoryRequest = "1Gi"
+		body.MemoryRequest = getDefaultSetting("default_memory_request", "2Gi")
 	}
 	if body.MemoryLimit == "" {
-		body.MemoryLimit = "4Gi"
+		body.MemoryLimit = getDefaultSetting("default_memory_limit", "4Gi")
 	}
 	if body.StorageHomebrew == "" {
-		body.StorageHomebrew = "10Gi"
+		body.StorageHomebrew = getDefaultSetting("default_storage_homebrew", "10Gi")
 	}
 	if body.StorageHome == "" {
-		body.StorageHome = "10Gi"
+		body.StorageHome = getDefaultSetting("default_storage_home", "10Gi")
 	}
 
 	name := generateName(body.DisplayName)
@@ -621,6 +708,36 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	enabledProvidersJSON, _ := json.Marshal(enabledProviders)
 
+	// Build channels config if Feishu is provided
+	var channelsConfigJSON string
+	var encFeishuSecret string
+	if body.FeishuAppID != nil && *body.FeishuAppID != "" {
+		cc := database.ChannelsConfig{
+			Feishu: &database.FeishuChannelConfig{
+				Enabled:        true,
+				ConnectionMode: "websocket",
+				Domain:         "feishu",
+				AppID:          *body.FeishuAppID,
+				Accounts: database.FeishuAccountDefaults{
+					Default: database.FeishuPolicyConfig{
+						DMPolicy:    "pairing",
+						GroupPolicy: "disabled",
+					},
+				},
+			},
+		}
+		b, _ := json.Marshal(cc)
+		channelsConfigJSON = string(b)
+
+		if body.FeishuAppSecret != nil && *body.FeishuAppSecret != "" {
+			encFeishuSecret, err = utils.Encrypt(*body.FeishuAppSecret)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to encrypt Feishu app secret")
+				return
+			}
+		}
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
@@ -644,6 +761,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ModelsConfig:     modelsConfigJSON,
 		DefaultModel:     body.DefaultModel,
 		EnabledProviders: string(enabledProvidersJSON),
+		ChannelsConfig:   channelsConfigJSON,
+		FeishuAppSecret:  encFeishuSecret,
 		SortOrder:        maxSortOrder + 1,
 	}
 
@@ -713,7 +832,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort, channelSyncFromInstance(inst))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -766,6 +885,8 @@ type instanceUpdateRequest struct {
 	MemoryRequest    *string       `json:"memory_request"`     // admin only
 	MemoryLimit      *string       `json:"memory_limit"`       // admin only
 	VNCResolution    *string       `json:"vnc_resolution"`     // admin only
+	FeishuAppID      *string       `json:"feishu_app_id"`
+	FeishuAppSecret  *string       `json:"feishu_app_secret"`
 }
 
 var (
@@ -846,6 +967,50 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update user agent
 	if body.UserAgent != nil {
 		database.DB.Model(&inst).Update("user_agent", *body.UserAgent)
+	}
+
+	// Update Feishu channel config
+	if body.FeishuAppID != nil || body.FeishuAppSecret != nil {
+		if body.FeishuAppID != nil {
+			if *body.FeishuAppID == "" {
+				// Clear Feishu config entirely
+				database.DB.Model(&inst).Update("channels_config", "")
+				database.DB.Model(&inst).Update("feishu_app_secret", "")
+			} else {
+				var cc database.ChannelsConfig
+				if inst.ChannelsConfig != "" {
+					json.Unmarshal([]byte(inst.ChannelsConfig), &cc)
+				}
+				if cc.Feishu == nil {
+					cc.Feishu = &database.FeishuChannelConfig{
+						Enabled:        true,
+						ConnectionMode: "websocket",
+						Domain:         "feishu",
+						Accounts: database.FeishuAccountDefaults{
+							Default: database.FeishuPolicyConfig{
+								DMPolicy:    "pairing",
+								GroupPolicy: "disabled",
+							},
+						},
+					}
+				}
+				cc.Feishu.AppID = *body.FeishuAppID
+				b, _ := json.Marshal(cc)
+				database.DB.Model(&inst).Update("channels_config", string(b))
+			}
+		}
+		if body.FeishuAppSecret != nil && (body.FeishuAppID == nil || *body.FeishuAppID != "") {
+			if *body.FeishuAppSecret == "" {
+				database.DB.Model(&inst).Update("feishu_app_secret", "")
+			} else {
+				encrypted, err := utils.Encrypt(*body.FeishuAppSecret)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "Failed to encrypt Feishu app secret")
+					return
+				}
+				database.DB.Model(&inst).Update("feishu_app_secret", encrypted)
+			}
+		}
 	}
 
 	// Update allowed source IPs (admin only)
@@ -1006,6 +1171,10 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveGatewayProviders(inst)
+		channelSync := channelSyncFromInstance(inst)
+		if body.FeishuAppID != nil && *body.FeishuAppID == "" {
+			channelSync = channelSyncConfig{Sync: true}
+		}
 		instID := inst.ID
 		instName := inst.Name
 		go func() {
@@ -1015,7 +1184,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, channelSync)
 		}()
 	}
 
@@ -1604,7 +1773,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort, channelSyncFromInstance(inst))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -1635,14 +1804,84 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ConfigureInstance sets the model configuration and gateway providers on a running instance
-// via openclaw CLI over SSH through inst.
+type feishuChannelSync struct {
+	Enabled        bool
+	ConnectionMode string
+	Domain         string
+	AccountID      string
+	AppID          string
+	AppSecret      string
+	DMPolicy       string
+	GroupPolicy    string
+}
+
+type channelSyncConfig struct {
+	Sync   bool
+	Feishu *feishuChannelSync
+}
+
+func channelSyncFromInstance(inst database.Instance) channelSyncConfig {
+	if inst.ChannelsConfig == "" {
+		return channelSyncConfig{}
+	}
+
+	var cc database.ChannelsConfig
+	if err := json.Unmarshal([]byte(inst.ChannelsConfig), &cc); err != nil || cc.Feishu == nil || cc.Feishu.AppID == "" {
+		return channelSyncConfig{}
+	}
+
+	secret := ""
+	if inst.FeishuAppSecret != "" {
+		if plain, err := utils.Decrypt(inst.FeishuAppSecret); err == nil {
+			secret = plain
+		}
+	}
+
+	feishu := cc.Feishu
+	connectionMode := feishu.ConnectionMode
+	if connectionMode == "" {
+		connectionMode = "websocket"
+	}
+	domain := feishu.Domain
+	if domain == "" {
+		domain = "feishu"
+	}
+	dmPolicy := feishu.Accounts.Default.DMPolicy
+	if dmPolicy == "" {
+		dmPolicy = "pairing"
+	}
+	groupPolicy := feishu.Accounts.Default.GroupPolicy
+	if groupPolicy == "" {
+		groupPolicy = "disabled"
+	}
+
+	return channelSyncConfig{
+		Sync: true,
+		Feishu: &feishuChannelSync{
+			Enabled:        feishu.Enabled,
+			ConnectionMode: connectionMode,
+			Domain:         domain,
+			AccountID:      "default",
+			AppID:          feishu.AppID,
+			AppSecret:      secret,
+			DMPolicy:       dmPolicy,
+			GroupPolicy:    groupPolicy,
+		},
+	}
+}
+
+// ConfigureInstance sets the model configuration, gateway providers, and channel
+// config on a running instance via openclaw CLI over SSH through inst.
 //
 // gatewayProviders (optional) maps provider key → gateway auth key for configuring
 // models.providers in OpenClaw to route through the internal LLM gateway.
 // gatewayPort is the port the LLM gateway listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) {
-	if len(models) == 0 && len(gatewayProviders) == 0 {
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int, channelSync ...channelSyncConfig) {
+	channels := channelSyncConfig{}
+	if len(channelSync) > 0 {
+		channels = channelSync[0]
+	}
+	if len(models) == 0 && len(gatewayProviders) == 0 && !channels.Sync {
 		return
 	}
 
@@ -1759,6 +1998,47 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		}
 	}
 
+	// Set channels config (e.g., Feishu) via openclaw CLI.
+	if channels.Sync {
+		feishuCfg := map[string]interface{}{"enabled": false}
+		if channels.Feishu != nil {
+			accountID := channels.Feishu.AccountID
+			if accountID == "" {
+				accountID = "default"
+			}
+			account := map[string]interface{}{
+				"appId": channels.Feishu.AppID,
+			}
+			if channels.Feishu.AppSecret != "" {
+				account["appSecret"] = channels.Feishu.AppSecret
+			}
+			feishuCfg = map[string]interface{}{
+				"enabled":        channels.Feishu.Enabled,
+				"connectionMode": channels.Feishu.ConnectionMode,
+				"domain":         channels.Feishu.Domain,
+				"defaultAccount": accountID,
+				"dmPolicy":       channels.Feishu.DMPolicy,
+				"groupPolicy":    channels.Feishu.GroupPolicy,
+				"accounts": map[string]interface{}{
+					accountID: account,
+				},
+			}
+		}
+		channelsJSON, err := json.Marshal(feishuCfg)
+		if err != nil {
+			log.Printf("Error marshaling Feishu channel config for %s: %v", utils.SanitizeForLog(name), err)
+		} else {
+			_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "channels.feishu", string(channelsJSON), "--json")
+			if err != nil {
+				log.Printf("Error setting Feishu channel config for %s: %v", utils.SanitizeForLog(name), err)
+			} else if code != 0 {
+				log.Printf("Failed to set Feishu channel config for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
+			} else {
+				log.Printf("Feishu channel config configured for %s", utils.SanitizeForLog(name))
+			}
+		}
+	}
+
 	// Restart gateway so it picks up new env vars and config
 	stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "gateway", "stop")
 	if err != nil {
@@ -1786,4 +2066,252 @@ func waitForRunning(ctx context.Context, ops orchestrator.ContainerOrchestrator,
 		}
 	}
 	return false
+}
+
+// pairingCodeRegex validates 8-character uppercase pairing codes (excluding 0O1I).
+var pairingCodeRegex = regexp.MustCompile(`^[A-Z2-9]{8}$`)
+
+// ListFeishuPairingRequests returns pending Feishu pairing requests for an instance.
+func ListFeishuPairingRequests(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if inst.Status != "running" {
+		writeError(w, http.StatusServiceUnavailable, "Instance is not running")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		return
+	}
+
+	sshInstance := sshproxy.NewSSHInstance(client)
+	stdout, stderr, code, err := sshInstance.ExecOpenclaw(r.Context(), "pairing", "list", "feishu", "--json")
+	log.Printf("[pairing] stdout=%q stderr=%q code=%d", stdout, stderr, code)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("Failed to execute pairing command: %v", err))
+		return
+	}
+	if code != 0 {
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("Pairing command failed: %s", utils.SanitizeForLog(stderr)))
+		return
+	}
+
+	// OpenClaw may emit plugin log lines on stdout before the JSON.
+	// Extract the last valid JSON object from stdout.
+	jsonStr := extractLastJSON(stdout)
+	if jsonStr == "" {
+		writeError(w, http.StatusInternalServerError, "No JSON output from pairing list command")
+		return
+	}
+
+	var result struct {
+		Requests []json.RawMessage `json:"requests"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to parse pairing list: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pending": result.Requests,
+	})
+}
+
+// ApproveFeishuPairingRequest approves a Feishu pairing request for an instance.
+func ApproveFeishuPairingRequest(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if inst.Status != "running" {
+		writeError(w, http.StatusServiceUnavailable, "Instance is not running")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate pairing code format
+	if !pairingCodeRegex.MatchString(req.Code) {
+		writeError(w, http.StatusBadRequest, "Invalid pairing code format: must be 8 uppercase letters (excluding 0O1I)")
+		return
+	}
+
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		return
+	}
+
+	sshInstance := sshproxy.NewSSHInstance(client)
+	stdout, stderr, code, err := sshInstance.ExecOpenclaw(r.Context(), "pairing", "approve", "feishu", req.Code)
+	log.Printf("[pairing] approve stdout=%q stderr=%q code=%d", stdout, stderr, code)
+
+	// Hash the code for audit logging
+	codeDigest := md5.Sum([]byte(req.Code))
+	codeHash := hex.EncodeToString(codeDigest[:])[:8]
+
+	if err != nil {
+		auditLog(sshaudit.EventPairingApprove, inst.ID, getUsername(r),
+			fmt.Sprintf("channel=feishu, code_hash=%s, result=ssh_error", codeHash))
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("Failed to execute pairing command: %v", err))
+		return
+	}
+
+	// Map CLI exit codes to HTTP status
+	switch code {
+	case 0:
+		auditLog(sshaudit.EventPairingApprove, inst.ID, getUsername(r),
+			fmt.Sprintf("channel=feishu, code_hash=%s, result=approved", codeHash))
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status": "approved",
+			"stdout": stdout,
+			"stderr": stderr,
+		})
+	case 1:
+		if strings.Contains(stderr, "not found") || strings.Contains(stderr, "expired") {
+			auditLog(sshaudit.EventPairingApprove, inst.ID, getUsername(r),
+				fmt.Sprintf("channel=feishu, code_hash=%s, result=not_found", codeHash))
+			writeError(w, http.StatusNotFound, "Pairing code not found or expired")
+			return
+		}
+		if strings.Contains(stderr, "already approved") || strings.Contains(stderr, "already paired") {
+			auditLog(sshaudit.EventPairingApprove, inst.ID, getUsername(r),
+				fmt.Sprintf("channel=feishu, code_hash=%s, result=already_approved", codeHash))
+			writeError(w, http.StatusConflict, "Pairing code already approved")
+			return
+		}
+		auditLog(sshaudit.EventPairingApprove, inst.ID, getUsername(r),
+			fmt.Sprintf("channel=feishu, code_hash=%s, result=cli_error", codeHash))
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("Pairing command failed: %s", utils.SanitizeForLog(stderr)))
+	default:
+		auditLog(sshaudit.EventPairingApprove, inst.ID, getUsername(r),
+			fmt.Sprintf("channel=feishu, code_hash=%s, result=unknown_error", codeHash))
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("Pairing command failed: %s", utils.SanitizeForLog(stderr)))
+	}
+}
+
+// RevokeFeishuPairing deletes the Feishu channel configuration for an instance.
+// This clears the ChannelsConfig and FeishuAppSecret from the database and restarts the gateway.
+func RevokeFeishuPairing(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if inst.Status != "running" {
+		writeError(w, http.StatusServiceUnavailable, "Instance is not running")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		return
+	}
+
+	// Delete Feishu channel configuration from database
+	if err := database.DB.Model(&inst).Updates(map[string]interface{}{
+		"channels_config":   "",
+		"feishu_app_secret": "",
+	}).Error; err != nil {
+		log.Printf("[pairing] delete channel db update failed: err=%v", err)
+		auditLog(sshaudit.EventChannelDelete, inst.ID, getUsername(r),
+			fmt.Sprintf("channel=feishu, result=db_error, error=%s", utils.SanitizeForLog(err.Error())))
+		writeError(w, http.StatusServiceUnavailable, "Failed to delete channel configuration")
+		return
+	}
+
+	// Restart gateway to reload with the (now empty) channel config
+	sshInstance := sshproxy.NewSSHInstance(client)
+	_, _, code, err := sshInstance.ExecOpenclaw(r.Context(), "gateway", "stop")
+	if err != nil || code != 0 {
+		// DB is already updated, so log warning but still return success
+		log.Printf("[pairing] delete channel gateway stop failed (continuing): code=%d err=%v", code, err)
+	}
+
+	auditLog(sshaudit.EventChannelDelete, inst.ID, getUsername(r), "channel=feishu, result=deleted")
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "deleted",
+	})
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, createElement } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, X, Maximize, ExternalLink, Plus } from "lucide-react";
+import { AlertTriangle, X, Maximize, ExternalLink, Plus, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
@@ -15,6 +15,8 @@ import { useInstanceBackups } from "@/hooks/useBackups";
 import SSHStatus from "@/components/SSHStatus";
 import SSHEventLog from "@/components/SSHEventLog";
 import SSHTroubleshoot from "@/components/SSHTroubleshoot";
+import PairingCard from "@/components/PairingCard";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   useInstance,
   useStartInstance,
@@ -30,6 +32,7 @@ import {
   useUpdateInstanceImage,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
+import { useFeishuPairingRequests, useApproveFeishuPairing, useRevokeFeishuPairing } from "@/hooks/usePairing";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
@@ -43,7 +46,6 @@ import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
-import type { InstanceUpdatePayload } from "@/types/instance";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
 
 type Tab = "chat" | "terminal" | "files" | "config" | "logs" | "settings";
@@ -150,6 +152,19 @@ export default function InstanceDetailPage() {
   const [editingResolution, setEditingResolution] = useState(false);
   const [pendingResolution, setPendingResolution] = useState<string | null>(null);
 
+  // Feishu channel editing state
+  const [editingFeishu, setEditingFeishu] = useState(false);
+  const [pendingFeishuAppId, setPendingFeishuAppId] = useState("");
+  const [pendingFeishuAppSecret, setPendingFeishuAppSecret] = useState("");
+  const [showFeishuSecret, setShowFeishuSecret] = useState(false);
+  const [originalFeishuAppId, setOriginalFeishuAppId] = useState<string | null>(null);
+
+  // Pairing state
+  const [approvedPairingCode, setApprovedPairingCode] = useState<string | null>(null);
+
+  // Delete Feishu channel confirmation
+  const [showDeleteFeishuConfirm, setShowDeleteFeishuConfirm] = useState(false);
+
   // Gateway providers editing state
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
@@ -189,6 +204,14 @@ export default function InstanceDetailPage() {
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
   const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
   const chatHook = useChat(instanceId, chatActivated && instance?.status === "running");
+
+  // Pairing hooks - only enabled when instance has Feishu configured and is running
+  const pairingEnabled = activeTab === "settings" &&
+                        instance?.status === "running" &&
+                        Boolean(instance?.feishu_app_id);
+  const pairingQuery = useFeishuPairingRequests(instanceId, pairingEnabled);
+  const approvePairingMutation = useApproveFeishuPairing(instanceId);
+  const revokePairingMutation = useRevokeFeishuPairing(instanceId);
 
   // Auto-send disabled — user sends first message manually
   // useEffect(() => { ... }, []);
@@ -255,6 +278,29 @@ export default function InstanceDetailPage() {
         onSuccess: () => {
           setEditingTimezone(false);
           setPendingTimezone(null);
+        },
+      },
+    );
+  };
+
+  const handleSaveFeishu = () => {
+    const payload: { feishu_app_id?: string; feishu_app_secret?: string } = {};
+    // Always send feishu_app_id if it changed or if we're clearing an existing value
+    if (pendingFeishuAppId !== "") {
+      payload.feishu_app_id = pendingFeishuAppId;
+    } else if (originalFeishuAppId !== null) {
+      // User cleared an existing App ID - send empty string to disable
+      payload.feishu_app_id = "";
+    }
+    if (pendingFeishuAppSecret !== "") {
+      payload.feishu_app_secret = pendingFeishuAppSecret;
+    }
+    updateMutation.mutate(
+      { id: instanceId, payload },
+      {
+        onSuccess: () => {
+          setEditingFeishu(false);
+          setPendingFeishuAppSecret("");
         },
       },
     );
@@ -377,7 +423,7 @@ export default function InstanceDetailPage() {
             {iconKey ? (
               <ProviderIcon provider={iconKey} size={18} />
             ) : (
-              <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
+              <span className="text-xs font-semibold text-gray-500">{p.name[0]?.toUpperCase() ?? "?"}</span>
             )}
           </div>
           <span className="text-sm font-semibold text-gray-900">{p.name}</span>
@@ -697,6 +743,119 @@ export default function InstanceDetailPage() {
             </div>
           </div>
 
+          {/* Channels */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-900">Channels</h3>
+              <div className="flex items-center gap-3">
+                {instance.feishu_app_id && !editingFeishu && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteFeishuConfirm(true)}
+                    className="text-xs text-red-600 hover:text-red-800"
+                  >
+                    Delete Channel
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingFeishu) {
+                      setEditingFeishu(false);
+                    } else {
+                      setPendingFeishuAppId(instance.feishu_app_id || "");
+                      setPendingFeishuAppSecret("");
+                      setOriginalFeishuAppId(instance.feishu_app_id || null);
+                      setEditingFeishu(true);
+                    }
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  {editingFeishu ? "Cancel" : "Edit"}
+                </button>
+              </div>
+            </div>
+            {editingFeishu ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm font-medium text-gray-700">Feishu</span>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">App ID</label>
+                  <input
+                    type="text"
+                    value={pendingFeishuAppId}
+                    onChange={(e) => setPendingFeishuAppId(e.target.value)}
+                    placeholder="cli_xxxxxxxxxxxxxxxx (empty to disable)"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">App Secret</label>
+                  <div className="relative">
+                    <input
+                      type={showFeishuSecret ? "text" : "password"}
+                      value={pendingFeishuAppSecret}
+                      onChange={(e) => setPendingFeishuAppSecret(e.target.value)}
+                      placeholder="Enter new secret to update"
+                      className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowFeishuSecret(!showFeishuSecret)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      {showFeishuSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={handleSaveFeishu}
+                    disabled={updateMutation.isPending}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-y-4 gap-x-8">
+                <div>
+                  <dt className="text-xs text-gray-500">Feishu App ID</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.feishu_app_id || "Not configured"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Feishu App Secret</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5 font-mono">
+                    {instance.masked_feishu_secret || "Not configured"}
+                  </dd>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pairing card - only shown when Feishu is configured */}
+          {instance.feishu_app_id && (
+            <PairingCard
+              data={pairingQuery.data}
+              isLoading={pairingQuery.isLoading}
+              isError={pairingQuery.isError}
+              onRefresh={() => pairingQuery.refetch()}
+              onApprove={(code) => {
+                approvePairingMutation.mutate(code, {
+                  onSuccess: () => {
+                    setApprovedPairingCode(code);
+                  },
+                });
+              }}
+              isApproving={approvePairingMutation.isPending}
+              approvedCode={approvedPairingCode}
+            />
+          )}
+
           {/* Resources card */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
@@ -931,6 +1090,23 @@ export default function InstanceDetailPage() {
           {/* Backups section (admin only) */}
           {isAdmin && (
             <BackupStatusCard instanceId={instanceId} instanceName={instance?.name || ""} />
+          )}
+
+          {/* Delete Feishu Channel confirmation */}
+          {showDeleteFeishuConfirm && (
+            <ConfirmDialog
+              title="Delete Feishu Channel"
+              message="This will permanently delete the Feishu channel configuration. You will need to reconfigure Feishu to use it again."
+              onConfirm={() => {
+                setShowDeleteFeishuConfirm(false);
+                revokePairingMutation.mutate(undefined, {
+                  onSuccess: () => {
+                    setApprovedPairingCode(null);
+                  },
+                });
+              }}
+              onCancel={() => setShowDeleteFeishuConfirm(false)}
+            />
           )}
 
           {eventsOpen && (

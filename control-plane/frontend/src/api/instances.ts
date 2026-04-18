@@ -7,6 +7,7 @@ import type {
   InstanceConfig,
   InstanceConfigUpdate,
   InstanceStats,
+  PairingListResponse,
 } from "@/types/instance";
 
 export async function fetchInstances(): Promise<Instance[]> {
@@ -105,4 +106,24 @@ export async function fetchInstanceStats(
 
 export async function updateInstanceImage(id: number): Promise<void> {
   await client.post(`/instances/${id}/update-image`);
+}
+
+export async function listFeishuPairingRequests(
+  id: number,
+): Promise<PairingListResponse> {
+  const { data } = await client.get<PairingListResponse>(
+    `/instances/${id}/pairing/feishu`,
+  );
+  return data;
+}
+
+export async function approveFeishuPairingRequest(
+  id: number,
+  code: string,
+): Promise<void> {
+  await client.post(`/instances/${id}/pairing/feishu/approve`, { code });
+}
+
+export async function revokeFeishuPairing(id: number): Promise<void> {
+  await client.post(`/instances/${id}/pairing/feishu/revoke`);
 }
