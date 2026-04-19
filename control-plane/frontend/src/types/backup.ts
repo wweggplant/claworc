@@ -7,6 +7,9 @@ export interface Backup {
   paths: string;
   size_bytes: number;
   error_message?: string;
+  restore_status?: "running" | "completed" | "failed" | "";
+  restore_error?: string;
+  restored_at?: string;
   note: string;
   created_at: string;
   completed_at?: string;

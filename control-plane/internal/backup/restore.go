@@ -75,11 +75,11 @@ func restoreArchive(ctx context.Context, orch orchestrator.ContainerOrchestrator
 
 	// Extract and clean up
 	_, stderr, exitCode, err := orch.ExecInInstance(ctx, instanceName,
-		[]string{"sh", "-c", fmt.Sprintf("tar xzf %s -C / 2>/dev/null; rm -f %s; exit 0", tmpPath, tmpPath)})
+		[]string{"sh", "-c", fmt.Sprintf("tar xzf %s -C / && rm -f %s || { rm -f %s; exit 1; }", tmpPath, tmpPath, tmpPath)})
 	if err != nil {
 		return fmt.Errorf("extract archive: %w", err)
 	}
-	if exitCode > 1 {
+	if exitCode != 0 {
 		return fmt.Errorf("extract failed (exit %d): %s", exitCode, stderr)
 	}
 

@@ -26,6 +26,7 @@ playwright-report/
 
 /control-plane/pkg/
 /control-plane/claworc
+/control-plane/claworcd
 /control-plane/control-plane
 
 .DS_Store

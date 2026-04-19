@@ -172,17 +172,20 @@ type UserInstance struct {
 }
 
 type Backup struct {
-	ID           uint       `gorm:"primaryKey;autoIncrement" json:"id"`
-	InstanceID   uint       `gorm:"not null;index" json:"instance_id"`
-	InstanceName string     `gorm:"not null" json:"instance_name"`
-	Status       string     `gorm:"not null;default:running" json:"status"`
-	FilePath     string     `gorm:"not null" json:"file_path"`
-	Paths        string     `gorm:"type:text;default:''" json:"paths"`
-	SizeBytes    int64      `json:"size_bytes"`
-	ErrorMessage string     `gorm:"type:text" json:"error_message,omitempty"`
-	Note         string     `gorm:"type:text" json:"note"`
-	CreatedAt    time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ID            uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID    uint       `gorm:"not null;index" json:"instance_id"`
+	InstanceName  string     `gorm:"not null" json:"instance_name"`
+	Status        string     `gorm:"not null;default:running" json:"status"`
+	FilePath      string     `gorm:"not null" json:"file_path"`
+	Paths         string     `gorm:"type:text;default:''" json:"paths"`
+	SizeBytes     int64      `json:"size_bytes"`
+	ErrorMessage  string     `gorm:"type:text" json:"error_message,omitempty"`
+	RestoreStatus string     `gorm:"type:text;default:''" json:"restore_status,omitempty"`
+	RestoreError  string     `gorm:"type:text" json:"restore_error,omitempty"`
+	RestoredAt    *time.Time `json:"restored_at,omitempty"`
+	Note          string     `gorm:"type:text" json:"note"`
+	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 type BackupSchedule struct {

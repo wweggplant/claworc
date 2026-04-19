@@ -18,14 +18,16 @@ import type {
   BackupScheduleUpdatePayload,
 } from "@/types/backup";
 
+const hasActiveWork = (data: Backup[] | undefined) =>
+  data?.some((b) => b.status === "running" || b.restore_status === "running") ?? false;
+
 export function useAllBackups() {
   return useQuery({
     queryKey: ["backups"],
     queryFn: fetchAllBackups,
     refetchInterval: (query) => {
       const data = query.state.data as Backup[] | undefined;
-      const hasRunning = data?.some((b) => b.status === "running");
-      return hasRunning ? 3000 : false;
+      return hasActiveWork(data) ? 3000 : false;
     },
   });
 }
@@ -36,8 +38,7 @@ export function useInstanceBackups(instanceId: number) {
     queryFn: () => fetchInstanceBackups(instanceId),
     refetchInterval: (query) => {
       const data = query.state.data as Backup[] | undefined;
-      const hasRunning = data?.some((b) => b.status === "running");
-      return hasRunning ? 3000 : false;
+      return hasActiveWork(data) ? 3000 : false;
     },
   });
 }
@@ -86,6 +87,7 @@ export function useRestoreBackup() {
     }) => restoreBackup(backupId, { instance_id: instanceId }),
     onSuccess: () => {
       successToast("Restore started");
+      // Enable polling to track restore progress
       qc.invalidateQueries({ queryKey: ["backups"] });
     },
     onError: (err) => {

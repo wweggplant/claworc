@@ -1,6 +1,6 @@
 import { useState, useMemo, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Trash2, Download, Loader2, Pencil } from "lucide-react";
+import { Trash2, Download, Loader2, Pencil, RotateCcw } from "lucide-react";
 import FolderInput from "@/components/FolderInput";
 import MultiSelect, { type MultiSelectOption } from "@/components/MultiSelect";
 import SingleSelect, { type SingleSelectOption } from "@/components/SingleSelect";
@@ -8,6 +8,7 @@ import {
   useAllBackups,
   useCreateBackup,
   useDeleteBackup,
+  useRestoreBackup,
   useBackupSchedules,
   useCreateSchedule,
   useUpdateSchedule,
@@ -62,6 +63,7 @@ export default function BackupsPage() {
   const [showCreateSchedule, setShowCreateSchedule] = useState(false);
   const [editSchedule, setEditSchedule] = useState<BackupSchedule | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
   const [confirmDeleteSchedule, setConfirmDeleteSchedule] = useState<number | null>(null);
 
   const filteredBackups = instanceFilter
@@ -189,7 +191,7 @@ export default function BackupsPage() {
                       </td>
                       <td className="px-4 py-3 text-gray-500">{b.instance_name}</td>
                       <td className="px-4 py-3">
-                        <StatusPill status={b.status} />
+                        <BackupStatusPill status={b.status} restoreStatus={b.restore_status} restoreError={b.restore_error} />
                       </td>
                       <td className="px-4 py-3 text-gray-500">
                         {b.status === "completed" ? formatBytes(b.size_bytes) : "—"}
@@ -205,6 +207,23 @@ export default function BackupsPage() {
                             >
                               <Download size={14} />
                             </a>
+                          )}
+                          {b.status === "completed" && b.restore_status !== "running" && (
+                            confirmRestore === b.id ? (
+                              <ConfirmRestoreInline
+                                backupId={b.id}
+                                instanceId={b.instance_id}
+                                onCancel={() => setConfirmRestore(null)}
+                              />
+                            ) : (
+                              <button
+                                onClick={() => setConfirmRestore(b.id)}
+                                className="p-1 text-gray-400 hover:text-orange-600 transition-colors"
+                                title="Restore"
+                              >
+                                <RotateCcw size={14} />
+                              </button>
+                            )
                           )}
                           {confirmDelete === b.id ? (
                             <ConfirmDeleteBackupInline
@@ -258,7 +277,30 @@ export default function BackupsPage() {
   );
 }
 
-function StatusPill({ status }: { status: string }) {
+function BackupStatusPill({ status, restoreStatus, restoreError }: { status: string; restoreStatus?: string; restoreError?: string }) {
+  // Restore status takes priority when backup itself is completed
+  if (status === "completed" && restoreStatus === "running") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+        <Loader2 size={10} className="animate-spin" />
+        restoring
+      </span>
+    );
+  }
+  if (status === "completed" && restoreStatus === "failed") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800" title={restoreError || undefined}>
+        restore failed
+      </span>
+    );
+  }
+  if (status === "completed" && restoreStatus === "completed") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+        restored
+      </span>
+    );
+  }
   const colors: Record<string, string> = {
     running: "bg-yellow-100 text-yellow-800",
     completed: "bg-green-100 text-green-800",
@@ -332,6 +374,41 @@ function ConfirmDeleteBackupInline({
       <button
         onClick={onCancel}
         className="px-2 py-0.5 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function ConfirmRestoreInline({
+  backupId,
+  instanceId,
+  onCancel,
+}: {
+  backupId: number;
+  instanceId: number;
+  onCancel: () => void;
+}) {
+  const restoreMutation = useRestoreBackup();
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => {
+          restoreMutation.mutate(
+            { backupId, instanceId },
+            { onSettled: onCancel },
+          );
+        }}
+        disabled={restoreMutation.isPending}
+        className="px-2 py-0.5 text-xs text-white bg-orange-600 rounded hover:bg-orange-700 disabled:opacity-50"
+      >
+        {restoreMutation.isPending ? "Restoring..." : "Confirm"}
+      </button>
+      <button
+        onClick={onCancel}
+        disabled={restoreMutation.isPending}
+        className="px-2 py-0.5 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
       >
         Cancel
       </button>

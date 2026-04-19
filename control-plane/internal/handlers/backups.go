@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -153,10 +156,30 @@ func RestoreBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run restore asynchronously
+	// Set restoring status
+	if err := database.UpdateBackup(uint(id), map[string]interface{}{
+		"restore_status": "running",
+		"restore_error":  "",
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update restore status")
+		return
+	}
+
+	// Run restore asynchronously — use background context so it survives client disconnect
 	go func() {
-		if err := backup.RestoreBackup(r.Context(), orch, inst.Name, uint(id)); err != nil {
-			fmt.Printf("restore backup %d to instance %s failed: %v\n", id, inst.Name, err)
+		if err := backup.RestoreBackup(context.Background(), orch, inst.Name, uint(id)); err != nil {
+			log.Printf("restore backup %d to instance %s failed: %v", id, inst.Name, err)
+			database.UpdateBackup(uint(id), map[string]interface{}{
+				"restore_status": "failed",
+				"restore_error":  err.Error(),
+			})
+		} else {
+			log.Printf("restore backup %d to instance %s completed", id, inst.Name)
+			now := time.Now().UTC()
+			database.UpdateBackup(uint(id), map[string]interface{}{
+				"restore_status": "completed",
+				"restored_at":    &now,
+			})
 		}
 	}()
 

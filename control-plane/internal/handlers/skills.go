@@ -312,17 +312,35 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 
 // detectZipPrefix returns a common top-level directory prefix if all files share one.
 func detectZipPrefix(files []*zip.File) string {
+	// Common metadata directories to ignore
+	metadataDirs := map[string]bool{
+		"__MACOSX": true,
+		".git":     true,
+	}
+
 	for _, f := range files {
 		if f.FileInfo().IsDir() {
 			continue
 		}
+		// Skip files in metadata directories
 		parts := strings.SplitN(f.Name, "/", 2)
 		if len(parts) != 2 {
-			return ""
+			continue
+		}
+		if metadataDirs[parts[0]] {
+			continue
 		}
 		prefix := parts[0] + "/"
 		for _, f2 := range files {
-			if !f2.FileInfo().IsDir() && !strings.HasPrefix(f2.Name, prefix) {
+			if f2.FileInfo().IsDir() {
+				continue
+			}
+			// Skip files in metadata directories during validation
+			f2Parts := strings.SplitN(f2.Name, "/", 2)
+			if len(f2Parts) == 2 && metadataDirs[f2Parts[0]] {
+				continue
+			}
+			if !strings.HasPrefix(f2.Name, prefix) {
 				return ""
 			}
 		}
