@@ -24,6 +24,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/crypto/ssh"
 )
 
 // In-memory status messages for instance creation progress.
@@ -551,6 +552,27 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	}
 }
 
+func waitForInitialSSH(ctx context.Context, instanceID uint, orch orchestrator.ContainerOrchestrator, allowedSourceIPs string, timeout time.Duration) (*ssh.Client, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		client, err := SSHMgr.EnsureConnectedWithIPCheck(ctx, instanceID, orch, allowedSourceIPs)
+		if err == nil {
+			return client, nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("SSH not ready")
+	}
+	return nil, fmt.Errorf("SSH not ready for instance %d after %v: %w", instanceID, timeout, lastErr)
+}
+
 func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
 	folders, err := database.GetSharedFoldersForInstance(instanceID)
 	if err != nil {
@@ -715,13 +737,14 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		cc := database.ChannelsConfig{
 			Feishu: &database.FeishuChannelConfig{
 				Enabled:        true,
-				ConnectionMode: "websocket",
-				Domain:         "feishu",
+				ConnectionMode: defaultFeishuConnectionMode,
+				Domain:         defaultFeishuDomain,
 				AppID:          *body.FeishuAppID,
 				Accounts: database.FeishuAccountDefaults{
 					Default: database.FeishuPolicyConfig{
-						DMPolicy:    "pairing",
-						GroupPolicy: "disabled",
+						DMPolicy:    defaultFeishuDMPolicy,
+						GroupPolicy: defaultFeishuGroupPolicy,
+						RenderMode:  defaultFeishuRenderMode,
 					},
 				},
 			},
@@ -813,7 +836,6 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			database.DB.Model(&inst).Update("status", "error")
 			return
 		}
-		clearStatusMessage(inst.ID)
 		database.DB.Model(&inst).Updates(map[string]interface{}{
 			"status":     "running",
 			"updated_at": time.Now().UTC(),
@@ -827,12 +849,15 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveGatewayProviders(inst)
-		sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
+		setStatusMessage(inst.ID, "Waiting for SSH...")
+		sshClient, err := waitForInitialSSH(ctx, inst.ID, orch, inst.AllowedSourceIPs, 120*time.Second)
 		if err != nil {
 			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 			return
 		}
+		setStatusMessage(inst.ID, "Configuring agent...")
 		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort, channelSyncFromInstance(inst))
+		clearStatusMessage(inst.ID)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -893,6 +918,14 @@ var (
 	cpuRegex        = regexp.MustCompile(`^(\d+m|\d+(\.\d+)?)$`)
 	memoryRegex     = regexp.MustCompile(`^\d+(Ki|Mi|Gi)$`)
 	resolutionRegex = regexp.MustCompile(`^\d+x\d+$`)
+)
+
+const (
+	defaultFeishuConnectionMode = "websocket"
+	defaultFeishuDomain         = "feishu"
+	defaultFeishuDMPolicy       = "pairing"
+	defaultFeishuGroupPolicy    = "disabled"
+	defaultFeishuRenderMode     = "card"
 )
 
 func cpuToMillicores(s string) int64 {
@@ -984,15 +1017,31 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				if cc.Feishu == nil {
 					cc.Feishu = &database.FeishuChannelConfig{
 						Enabled:        true,
-						ConnectionMode: "websocket",
-						Domain:         "feishu",
+						ConnectionMode: defaultFeishuConnectionMode,
+						Domain:         defaultFeishuDomain,
 						Accounts: database.FeishuAccountDefaults{
 							Default: database.FeishuPolicyConfig{
-								DMPolicy:    "pairing",
-								GroupPolicy: "disabled",
+								DMPolicy:    defaultFeishuDMPolicy,
+								GroupPolicy: defaultFeishuGroupPolicy,
+								RenderMode:  defaultFeishuRenderMode,
 							},
 						},
 					}
+				}
+				if cc.Feishu.ConnectionMode == "" {
+					cc.Feishu.ConnectionMode = defaultFeishuConnectionMode
+				}
+				if cc.Feishu.Domain == "" {
+					cc.Feishu.Domain = defaultFeishuDomain
+				}
+				if cc.Feishu.Accounts.Default.DMPolicy == "" {
+					cc.Feishu.Accounts.Default.DMPolicy = defaultFeishuDMPolicy
+				}
+				if cc.Feishu.Accounts.Default.GroupPolicy == "" {
+					cc.Feishu.Accounts.Default.GroupPolicy = defaultFeishuGroupPolicy
+				}
+				if cc.Feishu.Accounts.Default.RenderMode == "" {
+					cc.Feishu.Accounts.Default.RenderMode = defaultFeishuRenderMode
 				}
 				cc.Feishu.AppID = *body.FeishuAppID
 				b, _ := json.Marshal(cc)
@@ -1757,7 +1806,6 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			// Continue anyway – instance is created, just without cloned data
 		}
 
-		clearStatusMessage(inst.ID)
 		database.DB.Model(&inst).Updates(map[string]interface{}{
 			"status":     "running",
 			"updated_at": time.Now().UTC(),
@@ -1768,12 +1816,15 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.First(&inst, inst.ID)
 		// Don't carry over gateway keys from source — the clone gets its own instance ID
 		models := resolveInstanceModels(inst)
-		sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
+		setStatusMessage(inst.ID, "Waiting for SSH...")
+		sshClient, err := waitForInitialSSH(ctx, inst.ID, orch, inst.AllowedSourceIPs, 120*time.Second)
 		if err != nil {
 			log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 			return
 		}
+		setStatusMessage(inst.ID, "Configuring agent...")
 		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort, channelSyncFromInstance(inst))
+		clearStatusMessage(inst.ID)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -1813,6 +1864,7 @@ type feishuChannelSync struct {
 	AppSecret      string
 	DMPolicy       string
 	GroupPolicy    string
+	RenderMode     string
 }
 
 type channelSyncConfig struct {
@@ -1840,19 +1892,23 @@ func channelSyncFromInstance(inst database.Instance) channelSyncConfig {
 	feishu := cc.Feishu
 	connectionMode := feishu.ConnectionMode
 	if connectionMode == "" {
-		connectionMode = "websocket"
+		connectionMode = defaultFeishuConnectionMode
 	}
 	domain := feishu.Domain
 	if domain == "" {
-		domain = "feishu"
+		domain = defaultFeishuDomain
 	}
 	dmPolicy := feishu.Accounts.Default.DMPolicy
 	if dmPolicy == "" {
-		dmPolicy = "pairing"
+		dmPolicy = defaultFeishuDMPolicy
 	}
 	groupPolicy := feishu.Accounts.Default.GroupPolicy
 	if groupPolicy == "" {
-		groupPolicy = "disabled"
+		groupPolicy = defaultFeishuGroupPolicy
+	}
+	renderMode := feishu.Accounts.Default.RenderMode
+	if renderMode == "" {
+		renderMode = defaultFeishuRenderMode
 	}
 
 	return channelSyncConfig{
@@ -1866,6 +1922,7 @@ func channelSyncFromInstance(inst database.Instance) channelSyncConfig {
 			AppSecret:      secret,
 			DMPolicy:       dmPolicy,
 			GroupPolicy:    groupPolicy,
+			RenderMode:     renderMode,
 		},
 	}
 }
@@ -2007,7 +2064,8 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 				accountID = "default"
 			}
 			account := map[string]interface{}{
-				"appId": channels.Feishu.AppID,
+				"appId":      channels.Feishu.AppID,
+				"renderMode": channels.Feishu.RenderMode,
 			}
 			if channels.Feishu.AppSecret != "" {
 				account["appSecret"] = channels.Feishu.AppSecret

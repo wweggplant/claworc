@@ -415,6 +415,7 @@ func TestConfigureInstance_FeishuChannelsSet(t *testing.T) {
 				AppSecret:      "secret_test",
 				DMPolicy:       "pairing",
 				GroupPolicy:    "disabled",
+				RenderMode:     "card",
 			},
 		})
 
@@ -441,6 +442,7 @@ func TestConfigureInstance_FeishuChannelsSet(t *testing.T) {
 		`"groupPolicy":"disabled"`,
 		`"appId":"cli_test"`,
 		`"appSecret":"secret_test"`,
+		`"renderMode":"card"`,
 	} {
 		if !strings.Contains(feishuCall[3], want) {
 			t.Fatalf("channels.feishu JSON missing %s: %s", want, feishuCall[3])
@@ -503,5 +505,8 @@ func TestChannelSyncFromInstance_FeishuDefaultsAndSecret(t *testing.T) {
 	}
 	if syncCfg.Feishu.GroupPolicy != "disabled" {
 		t.Fatalf("expected default groupPolicy disabled, got %q", syncCfg.Feishu.GroupPolicy)
+	}
+	if syncCfg.Feishu.RenderMode != "card" {
+		t.Fatalf("expected default renderMode card, got %q", syncCfg.Feishu.RenderMode)
 	}
 }
