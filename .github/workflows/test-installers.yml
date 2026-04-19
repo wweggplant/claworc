@@ -5,12 +5,16 @@ on:
     paths:
       - 'install.sh'
       - 'install.ps1'
+      - 'scripts/test-install-config.sh'
+      - 'helm/**'
       - '.github/workflows/test-installers.yml'
   push:
     branches: [main]
     paths:
       - 'install.sh'
       - 'install.ps1'
+      - 'scripts/test-install-config.sh'
+      - 'helm/**'
       - '.github/workflows/test-installers.yml'
 
 jobs:
@@ -23,6 +27,9 @@ jobs:
 
       - name: Verify script syntax
         run: bash -n install.sh
+
+      - name: Validate image configuration
+        run: bash scripts/test-install-config.sh
 
       - name: Check for shellcheck issues
         run: |
@@ -83,6 +90,9 @@ jobs:
 
       - name: Verify script syntax
         run: bash -n install.sh
+
+      - name: Validate image configuration
+        run: bash scripts/test-install-config.sh
 
       - name: Verify line endings
         run: |
@@ -149,6 +159,10 @@ jobs:
       - name: Test syntax
         shell: bash
         run: bash -n install.sh
+
+      - name: Validate image configuration
+        shell: bash
+        run: bash scripts/test-install-config.sh
 
       - name: Install expect
         shell: bash

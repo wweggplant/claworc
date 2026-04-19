@@ -28,6 +28,7 @@ playwright-report/
 /control-plane/claworc
 /control-plane/claworcd
 /control-plane/control-plane
+/control-plane/benchmark
 
 .DS_Store
 
