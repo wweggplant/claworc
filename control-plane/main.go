@@ -178,9 +178,34 @@ func main() {
 			if err := database.DB.Where("status IN ?", []string{"running", "restarting", "error"}).Find(&instances).Error; err != nil {
 				return nil, err
 			}
-			ids := make([]uint, len(instances))
-			for i, inst := range instances {
-				ids[i] = inst.ID
+			ids := make([]uint, 0, len(instances))
+			for _, inst := range instances {
+				liveStatus, err := orch.GetInstanceStatus(ctx, inst.Name)
+				if err != nil {
+					log.Printf("Tunnel reconcile: skip instance %d (%s): live status lookup failed: %v", inst.ID, inst.Name, err)
+					continue
+				}
+
+				switch liveStatus {
+				case "running", "creating":
+					ids = append(ids, inst.ID)
+				case "stopped":
+					if inst.Status == "running" || inst.Status == "restarting" {
+						if err := database.DB.Model(&database.Instance{}).
+							Where("id = ?", inst.ID).
+							Updates(map[string]any{"status": "stopped", "updated_at": time.Now().UTC()}).Error; err != nil {
+							log.Printf("Tunnel reconcile: failed to mark instance %d as stopped: %v", inst.ID, err)
+						}
+					}
+				case "error":
+					if inst.Status == "running" || inst.Status == "restarting" {
+						if err := database.DB.Model(&database.Instance{}).
+							Where("id = ?", inst.ID).
+							Updates(map[string]any{"status": "error", "updated_at": time.Now().UTC()}).Error; err != nil {
+							log.Printf("Tunnel reconcile: failed to mark instance %d as error: %v", inst.ID, err)
+						}
+					}
+				}
 			}
 			return ids, nil
 		}, orch)

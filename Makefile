@@ -18,6 +18,7 @@ NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
 CACHE_ARGS ?=
 
 KUBECONFIG := ../kubeconfig
+unexport KUBECONFIG
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
@@ -122,6 +123,7 @@ install-dev: install-test
 dev:
 	@echo "=== Development Config ==="
 	@echo "  DATA_PATH: $(CLAWORC_DATA_PATH)"
+	@echo "  DOCKER_HOST: $(if $(CLAWORC_DOCKER_HOST),$(CLAWORC_DOCKER_HOST),auto)"
 	@echo ""
 	@echo "Control plane: http://localhost:8000"
 	@echo "Frontend:      http://localhost:5173"

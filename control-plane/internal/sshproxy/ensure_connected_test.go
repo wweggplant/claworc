@@ -160,6 +160,27 @@ func TestEnsureConnected_AddressFailure(t *testing.T) {
 	}
 }
 
+func TestEnsureConnected_NilOrchestrator(t *testing.T) {
+	_, privKeyPEM, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+	mgr := NewSSHManager(signer, "test-public-key")
+	defer mgr.CloseAll()
+
+	_, err = mgr.EnsureConnected(context.Background(), uint(1), nil)
+	if err == nil {
+		t.Fatal("EnsureConnected() expected error when orchestrator is nil")
+	}
+	if got := err.Error(); got != "orchestrator not initialized" {
+		t.Fatalf("EnsureConnected() error = %q, want %q", got, "orchestrator not initialized")
+	}
+}
+
 func TestEnsureConnected_ConnectFailureAfterUpload(t *testing.T) {
 	mgr, _, ts := newTestManagerWithPublicKey(t)
 	defer ts.cleanup()

@@ -374,10 +374,10 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:          []string{"CMD-SHELL", "bash -c '>/dev/tcp/127.0.0.1/22'"},
-			Interval:      30_000_000_000,
-			Timeout:       10_000_000_000,
-			Retries:       3,
-			StartInterval: 60_000_000_000,
+			Interval:      10_000_000_000,
+			Timeout:       5_000_000_000,
+			Retries:       6,
+			StartInterval: 5_000_000_000,
 		},
 	}
 

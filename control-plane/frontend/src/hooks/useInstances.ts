@@ -25,7 +25,13 @@ export function useInstances() {
   return useQuery({
     queryKey: ["instances"],
     queryFn: fetchInstances,
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const instances = query.state.data;
+      if (instances?.some((inst) => inst.status === "creating" || inst.status === "restarting")) {
+        return 2000;
+      }
+      return 5000;
+    },
     refetchIntervalInBackground: false,
   });
 }

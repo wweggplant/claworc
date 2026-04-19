@@ -145,8 +145,12 @@ func Close() error {
 
 func GetSetting(key string) (string, error) {
 	var s Setting
-	if err := DB.Where("key = ?", key).First(&s).Error; err != nil {
-		return "", err
+	tx := DB.Where("key = ?", key).Limit(1).Find(&s)
+	if tx.Error != nil {
+		return "", tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return "", gorm.ErrRecordNotFound
 	}
 	return s.Value, nil
 }

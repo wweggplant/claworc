@@ -84,11 +84,17 @@ type WorkspaceFS struct {
 }
 
 func (f *WorkspaceFS) client(ctx context.Context, instanceID uint) (*ssh.Client, error) {
+	if f == nil || f.DB == nil || f.SSH == nil {
+		return nil, fmt.Errorf("workspace fs not fully initialized")
+	}
 	var inst database.Instance
 	if err := f.DB.First(&inst, instanceID).Error; err != nil {
 		return nil, err
 	}
 	orch := orchestrator.Get()
+	if orch == nil {
+		return nil, fmt.Errorf("orchestrator not initialized")
+	}
 	return f.SSH.EnsureConnectedWithIPCheck(ctx, inst.ID, orch, inst.AllowedSourceIPs)
 }
 
@@ -433,7 +439,10 @@ type InstanceLister struct{ DB *gorm.DB }
 
 func (l *InstanceLister) ListInstanceIDs(ctx context.Context) ([]uint, error) {
 	var ids []uint
-	if err := l.DB.WithContext(ctx).Model(&database.Instance{}).Pluck("id", &ids).Error; err != nil {
+	if err := l.DB.WithContext(ctx).
+		Model(&database.Instance{}).
+		Where("status IN ?", []string{"running", "restarting"}).
+		Pluck("id", &ids).Error; err != nil {
 		return nil, err
 	}
 	return ids, nil

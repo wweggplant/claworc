@@ -350,6 +350,10 @@ func (m *SSHManager) EnsureConnectedWithIPCheck(ctx context.Context, instanceID 
 		return client, nil
 	}
 
+	if orch == nil {
+		return nil, fmt.Errorf("orchestrator not initialized")
+	}
+
 	// 2. Get instance SSH address from orchestrator
 	host, port, err := orch.GetSSHAddress(ctx, instanceID)
 	if err != nil {
