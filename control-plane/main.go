@@ -419,8 +419,9 @@ func main() {
 	r.NotFound(spa.ServeHTTP)
 
 	// Graceful shutdown
+	addr := fmt.Sprintf(":%d", config.Cfg.Port)
 	srv := &http.Server{
-		Addr:    ":8000",
+		Addr:    addr,
 		Handler: r,
 	}
 
@@ -428,7 +429,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("Server starting on :8000")
+		log.Printf("Server starting on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}

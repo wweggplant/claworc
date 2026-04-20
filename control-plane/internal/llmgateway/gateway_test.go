@@ -1048,7 +1048,7 @@ func TestBuildTargetURL(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vals, _ := url.ParseQuery(tc.query)
-			got := buildTargetURL(tc.baseURL, tc.requestPath, GetAPIType(tc.apiType), vals)
+			got := buildTargetURL(tc.baseURL, tc.requestPath, "", nil, GetAPIType(tc.apiType), vals)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}

@@ -148,9 +148,11 @@ func resolveRealAPIKey(provider database.LLMProvider) string {
 
 // buildTargetURL constructs the upstream URL from the provider base URL and the request path/query.
 // Path rewriting (e.g. /v1 deduplication, prefix injection) is delegated to at.RewritePath.
+// model and body are forwarded to RewritePath for providers (e.g. Bedrock) that embed the model
+// in the URL and select the streaming endpoint based on the request body.
 // Always removes the ?key= query parameter (Google SDK sends the API key there).
-func buildTargetURL(baseURL string, requestPath string, at APIType, query url.Values) string {
-	requestPath = at.RewritePath(baseURL, requestPath)
+func buildTargetURL(baseURL string, requestPath string, model string, body []byte, at APIType, query url.Values) string {
+	requestPath = at.RewritePath(baseURL, requestPath, model, body)
 	target := baseURL + requestPath
 	query.Del("key")
 	if encoded := query.Encode(); encoded != "" {
@@ -183,7 +185,7 @@ func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []
 		}
 	}
 	if apiKey != "" {
-		at.SetAuthHeader(req, apiKey)
+		at.SetAuthHeader(req, apiKey, body)
 	}
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
@@ -235,7 +237,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(body, &reqBody)
 
 	at := GetAPIType(apiType)
-	targetURL := buildTargetURL(baseURL, r.URL.Path, at, r.URL.Query())
+	targetURL := buildTargetURL(baseURL, r.URL.Path, reqBody.Model, body, at, r.URL.Query())
 
 	// Use context.Background() instead of r.Context() so that a client disconnect
 	// does not cancel the upstream request mid-stream. This is important for streaming
@@ -260,11 +262,18 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	// Copy response headers
-	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+	contentType := resp.Header.Get("Content-Type")
+	isSSEStream := strings.Contains(contentType, "text/event-stream")
+	isBedrockStream := at.IsEventStream() && strings.Contains(contentType, "application/vnd.amazon.eventstream")
+	isStreaming := isSSEStream || isBedrockStream
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
+	}
+	// Transcode Bedrock binary event stream to SSE for the client.
+	if isBedrockStream {
+		w.Header().Set("Content-Type", "text/event-stream")
 	}
 	// Prevent browsers from MIME-sniffing the response into an executable content type (XSS mitigation).
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -273,7 +282,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg := processResponse(w, resp.Body, isStreaming, at, apiType, resp.StatusCode, providerModels, reqBody.Model)
+	inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg := processResponse(w, resp.Body, isStreaming, isBedrockStream, at, apiType, resp.StatusCode, providerModels, reqBody.Model)
 	latencyMs := time.Since(start).Milliseconds()
 	logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
 	logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg)
@@ -302,9 +311,14 @@ func logResponseBody(model, apiType string, statusCode int, body []byte) {
 // and returns metrics for logging. For streaming responses each chunk is forwarded immediately
 // while also being captured for post-stream token parsing. For non-streaming responses the
 // body is buffered, written to w, then parsed.
-func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, at APIType, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
+// isBedrockEventStream signals that the upstream body uses AWS binary event stream encoding and
+// must be transcoded to SSE before being written to the client.
+func processResponse(w http.ResponseWriter, body io.Reader, isStreaming, isBedrockEventStream bool, at APIType, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
 	var captured []byte
-	if isStreaming {
+	if isBedrockEventStream {
+		// Transcode AWS binary event stream → SSE and capture for usage parsing.
+		captured = transcodeBedrockEventStream(body, w)
+	} else if isStreaming {
 		flusher, canFlush := w.(http.Flusher)
 		var capBuf bytes.Buffer
 		// Use a TeeReader so the body is simultaneously captured and forwarded.

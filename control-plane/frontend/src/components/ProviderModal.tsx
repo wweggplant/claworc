@@ -55,6 +55,11 @@ export default function ProviderModal({
   const [mApiKey, setMApiKey] = useState("");
   const [mShowApiKey, setMShowApiKey] = useState(false);
   const [mApiType, setMApiType] = useState("openai-completions");
+  // Bedrock-specific credential fields (assembled into mApiKey on save)
+  const [mBedrockAccessKey, setMBedrockAccessKey] = useState("");
+  const [mBedrockSecretKey, setMBedrockSecretKey] = useState("");
+  const [mBedrockSessionToken, setMBedrockSessionToken] = useState("");
+  const [mBedrockRegion, setMBedrockRegion] = useState("");
   const [mModels, setMModels] = useState<ProviderModel[]>([]);
   const [mModelDraft, setMModelDraft] = useState({
     id: "",
@@ -88,6 +93,7 @@ export default function ProviderModal({
     createProviderMutation.reset();
     updateProviderMutation.reset();
     deleteProviderMutation.reset();
+    const resetBedrock = () => { setMBedrockAccessKey(""); setMBedrockSecretKey(""); setMBedrockSessionToken(""); setMBedrockRegion(""); };
     if (mode === "create") {
       setMCatalogKey("");
       setMProvider("");
@@ -99,6 +105,7 @@ export default function ProviderModal({
       setMModels([]);
       setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
       setMShowOptionalFields(false);
+      resetBedrock();
     } else if (provider) {
       setMCatalogKey("");
       setMName(provider.name);
@@ -109,6 +116,7 @@ export default function ProviderModal({
       setMModels(provider.models || []);
       setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
       setMShowOptionalFields(false);
+      resetBedrock();
     }
   }, [open, mode, provider]);
 
@@ -159,6 +167,18 @@ export default function ProviderModal({
     if (mode === "edit") return provider!.api_type || "openai-completions";
     const catalogEntry = catalogProviders.find((c) => c.name === mCatalogKey);
     return catalogEntry?.api_format ?? "openai-completions";
+  };
+
+  const isBedrock = resolveApiType() === "bedrock-converse" || resolveApiType() === "bedrock-converse-stream";
+
+  // Build the combined API key string from the three Bedrock fields.
+  const resolveApiKey = (): string => {
+    if (!isBedrock) return mApiKey.trim();
+    if (!mBedrockAccessKey.trim()) return "";
+    const parts: string[] = [mBedrockAccessKey.trim(), mBedrockSecretKey.trim()];
+    if (mBedrockSessionToken.trim() || mBedrockRegion.trim()) parts.push(mBedrockSessionToken.trim());
+    if (mBedrockRegion.trim()) parts.push(mBedrockRegion.trim());
+    return parts.join(":");
   };
 
   const refreshQueries = () => Promise.all([
@@ -219,7 +239,7 @@ export default function ProviderModal({
           base_url: mBaseURL,
           api_type: apiType,
           models,
-          api_key: mApiKey.trim() || undefined,
+          api_key: resolveApiKey() || undefined,
           instance_id: instanceId,
         });
       } else {
@@ -229,10 +249,10 @@ export default function ProviderModal({
         };
         if (isCustomProvider) {
           payload.api_type = mApiType;
-          payload.models = mModels;
         }
-        if (mApiKey.trim()) {
-          payload.api_key = mApiKey.trim();
+        payload.models = mModels;
+        if (resolveApiKey()) {
+          payload.api_key = resolveApiKey();
         }
         await updateProviderMutation.mutateAsync({ id: provider!.id, payload });
       }
@@ -290,7 +310,7 @@ export default function ProviderModal({
     !!mName &&
     !!mBaseURL &&
     (!isCustomProvider || mModels.length > 0) &&
-    (mode === "edit" || isCustomProvider || !!mApiKey.trim()) &&
+    (mode === "edit" || isCustomProvider || !!resolveApiKey()) &&
     !createProviderMutation.isPending &&
     !updateProviderMutation.isPending;
 
@@ -377,9 +397,8 @@ export default function ProviderModal({
           )}
 
           {isCustomProvider && (
-            <>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">API Type</label>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">API Type</label>
                 <select
                   value={mApiType}
                   onChange={(e) => setMApiType(e.target.value)}
@@ -391,11 +410,13 @@ export default function ProviderModal({
                   <option value="ollama">ollama</option>
                   <option value="bedrock-converse-stream">bedrock-converse-stream</option>
                 </select>
-              </div>
+            </div>
+          )}
 
-              <div>
+          {(isCustomProvider || mode === "edit") && showForm && (
+            <div>
                 <label className="block text-xs text-gray-500 mb-1">
-                  Models <span className="text-red-500">*</span>
+                  Models {isCustomProvider && <span className="text-red-500">*</span>}
                 </label>
                 {mModels.length > 0 && (
                   <div className="mb-2 space-y-1">
@@ -509,12 +530,11 @@ export default function ProviderModal({
                     + Add Model
                   </button>
                 </div>
-              </div>
-            </>
+            </div>
           )}
 
           {/* API Key */}
-          {showForm && (
+          {showForm && !isBedrock && (
             <div>
               <label className="block text-xs text-gray-500 mb-1">
                 API Key{" "}
@@ -537,6 +557,65 @@ export default function ProviderModal({
                 >
                   {mShowApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Bedrock credentials */}
+          {showForm && isBedrock && (
+            <div className="space-y-2">
+              <label className="block text-xs text-gray-500">
+                AWS Credentials{" "}
+                {mode === "edit" && <span className="text-gray-400">(leave blank to keep current)</span>}
+              </label>
+              <div>
+                <label className="block text-xs text-gray-400 mb-0.5">Access Key ID</label>
+                <input
+                  type="text"
+                  value={mBedrockAccessKey}
+                  onChange={(e) => setMBedrockAccessKey(e.target.value)}
+                  placeholder="AKIAIOSFODNN7EXAMPLE"
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-0.5">Secret Access Key</label>
+                <div className="relative">
+                  <input
+                    type={mShowApiKey ? "text" : "password"}
+                    value={mBedrockSecretKey}
+                    onChange={(e) => setMBedrockSecretKey(e.target.value)}
+                    placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                    className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMShowApiKey(!mShowApiKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {mShowApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-0.5">Session Token <span className="text-gray-300">(optional, for temporary credentials)</span></label>
+                <input
+                  type={mShowApiKey ? "text" : "password"}
+                  value={mBedrockSessionToken}
+                  onChange={(e) => setMBedrockSessionToken(e.target.value)}
+                  placeholder="Leave blank if using long-term credentials"
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-0.5">Region <span className="text-gray-300">(optional, defaults to region in Base URL)</span></label>
+                <input
+                  type="text"
+                  value={mBedrockRegion}
+                  onChange={(e) => setMBedrockRegion(e.target.value)}
+                  placeholder="e.g. us-west-2"
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
             </div>
           )}
@@ -565,8 +644,8 @@ export default function ProviderModal({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: resolveApiType() })}
-              disabled={!mBaseURL || !mApiKey.trim() || testMutation.isPending}
+              onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: resolveApiKey(), api_type: resolveApiType() })}
+              disabled={!mBaseURL || !resolveApiKey() || testMutation.isPending}
               className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {testMutation.isPending ? "Testing..." : "Test"}

@@ -1051,9 +1051,10 @@ func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey 
 		return 0, "", reqErr
 	}
 
-	// Set auth and probe headers via API type abstraction
+	// Set auth and probe headers via API type abstraction.
+	// Probe requests have no body, so pass nil — SigV4 will hash an empty payload.
 	at := llmgateway.GetAPIType(apiType)
-	at.SetAuthHeader(req, apiKey)
+	at.SetAuthHeader(req, apiKey, nil)
 	at.ProbeHeaders(req)
 
 	resp, doErr := providerProbeClient.Do(req)

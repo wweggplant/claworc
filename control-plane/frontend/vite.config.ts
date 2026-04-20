@@ -88,24 +88,14 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: {
-      "/api": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-        autoRewrite: true,
-        ws: true,
-      },
-      "/health": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-        autoRewrite: true,
-      },
-      "/openclaw": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-        autoRewrite: true,
-        ws: true,
-      },
-    },
+    proxy: (() => {
+      const backendPort = process.env.CLAWORC_PORT ?? "8000";
+      const backendURL = `http://127.0.0.1:${backendPort}`;
+      return {
+        "/api": { target: backendURL, changeOrigin: true, autoRewrite: true, ws: true },
+        "/health": { target: backendURL, changeOrigin: true, autoRewrite: true },
+        "/openclaw": { target: backendURL, changeOrigin: true, autoRewrite: true, ws: true },
+      };
+    })(),
   },
 });

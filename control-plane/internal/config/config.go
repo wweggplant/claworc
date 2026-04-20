@@ -19,6 +19,9 @@ type Settings struct {
 	TerminalRecordingDir   string `envconfig:"TERMINAL_RECORDING_DIR" default:""`
 	TerminalSessionTimeout string `envconfig:"TERMINAL_SESSION_TIMEOUT" default:"30m"`
 
+	// HTTP server port
+	Port int `envconfig:"PORT" default:"8000"`
+
 	// LLM gateway settings
 	LLMGatewayPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
 	LLMResponseLog string `envconfig:"LLM_RESPONSE_LOG" default:""`
